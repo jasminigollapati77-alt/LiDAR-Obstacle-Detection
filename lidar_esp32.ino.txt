@@ -1,0 +1,117 @@
+
+#include <HardwareSerial.h>
+#include <ESP32Servo.h>
+
+// TF-Luna LiDAR
+HardwareSerial lidar(2);
+uint8_t frame[9];
+
+// LED
+#define LED_PIN 2
+bool ledState = false;
+unsigned long previousBlink = 0;
+
+// Servo
+#define SERVO_PIN 18
+Servo myServo;
+
+int currentAngle = 30;
+int direction = 1;
+
+unsigned long previousServo = 0;
+unsigned long previousStatus = 0;
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  // TF-Luna UART: RX = GPIO 16, TX = GPIO 17
+  lidar.begin(115200, SERIAL_8N1, 16, 17);
+
+  // Servo initialization
+  myServo.setPeriodHertz(50);
+  myServo.attach(SERVO_PIN, 500, 2400);
+  myServo.write(currentAngle);
+
+  Serial.println("ESP32 + TF-Luna + Servo started!");
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // 1. Blink LED every second
+  if (now - previousBlink >= 1000) {
+    previousBlink = now;
+    ledState = !ledState;
+    digitalWrite(LED_PIN, ledState);
+  }
+
+  // 2. Move servo between 30 and 150 degrees
+  if (now - previousServo >= 30) {
+    previousServo = now;
+
+    currentAngle += direction;
+
+    if (currentAngle >= 150) {
+      currentAngle = 150;
+      direction = -1;
+    }
+
+    if (currentAngle <= 30) {
+      currentAngle = 30;
+      direction = 1;
+    }
+
+    myServo.write(currentAngle);
+  }
+
+  // 3. Show a status message every second
+  if (now - previousStatus >= 1000) {
+    previousStatus = now;
+    Serial.println("ESP32 is running...");
+  }
+
+  // 4. Read TF-Luna distance data
+  while (lidar.available() >= 9) {
+    if (lidar.read() != 0x59) continue;
+    if (lidar.read() != 0x59) continue;
+
+    frame[0] = 0x59;
+    frame[1] = 0x59;
+
+    bool validFrame = true;
+
+    for (int i = 2; i < 9; i++) {
+      int value = lidar.read();
+
+      if (value < 0) {
+        validFrame = false;
+        break;
+      }
+
+      frame[i] = (uint8_t)value;
+    }
+
+    if (!validFrame) continue;
+
+    uint8_t checksum = 0;
+
+    for (int i = 0; i < 8; i++) {
+      checksum += frame[i];
+    }
+
+    if (checksum != frame[8]) continue;
+
+    int distanceCm = frame[2] | (frame[3] << 8);
+    int signalStrength = frame[4] | (frame[5] << 8);
+
+    Serial.print("Distance: ");
+    Serial.print(distanceCm);
+    Serial.print(" cm | Signal: ");
+    Serial.print(signalStrength);
+    Serial.print(" | Servo angle: ");
+    Serial.println(currentAngle);
+  }
+}
